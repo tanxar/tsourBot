@@ -1,6 +1,7 @@
 import logging
 import re
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.constants import ParseMode
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ContextTypes, ConversationHandler
@@ -15,7 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Define states for conversation flow
-SELECTING_CHAIN, TYPING_TOKEN, TYPING_PORTAL, SELECTING_SLOT = range(4)
+SELECTING_CHAIN, TYPING_TOKEN, TYPING_PORTAL, SELECTING_SLOT, SELECTING_PERIOD, CONFIRMING_ORDER = range(6)
 
 # Define a few command handlers. These usually take the two arguments update and context.
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -38,7 +39,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle button clicks."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(text="Send me your token address.")
+    await query.edit_message_text(text=" Send me your token address.")
     
     # Store the chain selection in the context for future use
     context.user_data['chain'] = query.data
@@ -61,7 +62,7 @@ async def order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle order selection."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(text="Send me portal/group link.")
+    await query.edit_message_text(text="❔ Send me portal/group link.")
     return TYPING_PORTAL
 
 async def portal_group_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -75,14 +76,14 @@ async def portal_group_link(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # Ask the user to select an open slot
         slot_keyboard = [
             [
-                InlineKeyboardButton("Top 3 Guarantee", callback_data='Top 3 Guarantee'),
-                InlineKeyboardButton("Top 8 Guarantee", callback_data='Top 8 Guarantee')
+                InlineKeyboardButton("🟢 Top 3 Guarantee", callback_data='Top 3 Guarantee'),
+                InlineKeyboardButton("🔴 Top 8 Guarantee", callback_data='Top 8 Guarantee')
             ],
-            [InlineKeyboardButton("Any position", callback_data='Any position')]
+            [InlineKeyboardButton("🟢 Any position", callback_data='Any position')]
         ]
         slot_reply_markup = InlineKeyboardMarkup(slot_keyboard)
         await update.message.reply_text(
-            'Select open slot or click to see the nearest potential availability time:',
+            'ℹ Select open slot or click to see the nearest potential availability time:',
             reply_markup=slot_reply_markup
         )
         return SELECTING_SLOT
@@ -94,9 +95,75 @@ async def slot_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """Handle slot selection."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(text=f"You selected {query.data}.")
+    context.user_data['slot'] = query.data
+    # await query.edit_message_text(text=f"You selected {query.data}. Select period:")
+    
+    # Present period options
+    period_keyboard = [
+        [
+            InlineKeyboardButton("3 hours", callback_data='3 hours'),
+            InlineKeyboardButton("6 hours | -10%", callback_data='6 hours')
+        ],
+        [
+            InlineKeyboardButton("12 hours | -20%", callback_data='12 hours'),
+            InlineKeyboardButton("24 hours | -30%", callback_data='24 hours')
+        ]
+    ]
+    period_reply_markup = InlineKeyboardMarkup(period_keyboard)
+    await query.message.reply_text('❔ Select period:', reply_markup=period_reply_markup)
+    return SELECTING_PERIOD
+
+async def period_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle period selection."""
+    query = update.callback_query
+    await query.answer()
+    context.user_data['period'] = query.data
+    
+    # Gather all the details for confirmation
+    token_address = context.user_data.get('token_address')
+    chain = context.user_data.get('chain')
+    portal_link = context.user_data.get('portal_link')
+    slot = context.user_data.get('slot')
+    period = query.data
+    price = "3.85 SOL"  # Assuming a static price for simplicity
+
+    # Send confirmation message
+    confirmation_message = (
+        f"Confirm your order:\n\n"
+        f"Token Address: {token_address}\n"
+        f"Chain: {chain}\n"
+        f"Portal: {portal_link}\n"
+        f"Time: {period}\n"
+        f"Top: {slot}\n"
+        f"Price: {price}\n\n"
+        'Be sure to read full message before you continue, by clicking "✅ Confirm" button below you also confirm that you understand and accept rules:\n'
+        '1. Deluge.Cash team can remove your token from the trending list with no chance of a refund if they suspect a scam in your token (ex.: sell tax 99%, developer mints a lot of tokens, liquidity removal and etc.) or abandoned project or lack of telegram group moderation or false information or deception or NSFW content in group or any place where links in channel/group leads to including "portals" to group.\n' 
+        "2. You must ensure that your advertisement, links to channels or groups you provide and any related materials posted, distributed or linked to in a group or channel you provide do not provide false information, deception, sexual or any NSFW (Not Safe For Work) content. This includes, but is not limited to, any material that is pornographic, sexually explicit, or otherwise inappropriate for a general audience.\n"
+        "3. You are forbidden from including or linking to pornography, sexually explicit images, videos, or other materials, whether real or simulated, in your advertisement.\n"
+        "4. You must avoid including sexually suggestive content in your advertisement, including images, videos, text, and any other forms of media intended to arouse.\n"
+        "5. You must ensure that your advertisement do not involve scams or fraudulent schemes intended to deceive others for financial gain or other benefits.\n"
+        '6. If suspicious activity in the form of "farming" (developers keeping more than 14%, splitting wallets) is noticed and according to the Deluge.Cash team it may be a threat, your token will be removed from trending list, refund is not available.\n'
+        "7. You should also realize that the position in the trending list has NO IMPACT on the chances of sending a buy in the trending channel, chances of sending buy to channel: ~25% for buys >10$ if @buybot setted up in group.\n"
+        "8. For violation of any of the above rules your token will be removed from trending list, refund is not available.\n"
+        "9. Refund can be made only in case of full service disruption (stop updating trending list and your token not in the list and full stop displaying buys in the channel) more than 20 minutes straight and to the address of the wallet from which the payment was made to the address for payment, do NOT send payment from exchanges or wallets to which you do not have access because you will not be refunded, use only your personal wallet to which you will always have access."
+    )
+    confirm_keyboard = [
+        [InlineKeyboardButton("✅ Confirm", callback_data='confirm_order')],
+        [InlineKeyboardButton("❌ Cancel and start over", callback_data='cancel_and_start_over')]
+    ]
+    confirm_reply_markup = InlineKeyboardMarkup(confirm_keyboard)
+
+    await query.edit_message_text(confirmation_message, reply_markup=confirm_reply_markup)
+    
     # End the conversation
-    return ConversationHandler.END
+    return CONFIRMING_ORDER
+
+async def cancel_and_start_over(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle cancel and start over."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(text="Order cancelled. Starting over.")
+    return await start(query, context)
 
 async def delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /delete command."""
@@ -116,7 +183,10 @@ async def confirm_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """Handle confirmation of delete."""
     query = update.callback_query
     await query.answer()
-    # Here you would add the logic to delete the configuration data.
+    
+    # Clear user data
+    context.user_data.clear()
+    
     await query.edit_message_text(text="All configuration data has been deleted.")
     # Restart the conversation from the beginning
     return await start(query, context)
@@ -127,6 +197,46 @@ async def cancel_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await query.answer()
     await query.edit_message_text(text="Deletion cancelled.")
     # End the conversation
+    return ConversationHandler.END
+
+async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle order confirmation."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Retrieve user-entered data
+    token_address = context.user_data.get('token_address')
+    chain = context.user_data.get('chain')
+    portal_link = context.user_data.get('portal_link')
+    slot = context.user_data.get('slot')
+    period = context.user_data.get('period')
+    price = "3.85 SOL"  # Assuming a static price for simplicity
+    
+    payment_information = (
+        "❔ Payment Information:\n\n"
+        "⤵️ Always double check that you have entered the correct address before sending.\n"
+        f"Address: {token_address}\n"
+        f"Amount: {price}\n\n"
+        "After the transfer, click the button below, you can transfer the rest if you haven't transferred enough.\n\n"
+        "To cancel the payment and start over, use /delete."
+    )
+    
+    check_payment_keyboard = [
+        [InlineKeyboardButton("Check payment", callback_data='check_payment')]
+    ]
+    check_payment_reply_markup = InlineKeyboardMarkup(check_payment_keyboard)
+    
+    await query.edit_message_text(payment_information, reply_markup=check_payment_reply_markup)
+
+    # Here you can add logic to process the confirmed order.
+    return ConversationHandler.END
+
+async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle check payment."""
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(text="❗️ Payment Not Received.")
+
     return ConversationHandler.END
 
 def main() -> None:
@@ -147,9 +257,16 @@ def main() -> None:
             SELECTING_SLOT: [
                 CallbackQueryHandler(order, pattern='^(Fast-Track)$'),
                 CallbackQueryHandler(slot_selection, pattern='^(Top 3 Guarantee|Top 8 Guarantee|Any position)$')
+            ],
+            SELECTING_PERIOD: [
+                CallbackQueryHandler(period_selection, pattern='^(3 hours|6 hours|12 hours|24 hours)$')
+            ],
+            CONFIRMING_ORDER: [
+                CallbackQueryHandler(confirm_order, pattern='^confirm_order$'),
+                CallbackQueryHandler(cancel_and_start_over, pattern='^cancel_and_start_over$')
             ]
         },
-        fallbacks=[]
+        fallbacks=[CommandHandler("start", start)]
     )
 
     # Add conversation handler to application
@@ -159,6 +276,9 @@ def main() -> None:
     application.add_handler(CommandHandler("delete", delete))
     application.add_handler(CallbackQueryHandler(confirm_delete, pattern='^confirm_delete$'))
     application.add_handler(CallbackQueryHandler(cancel_delete, pattern='^cancel_delete$'))
+    
+    # Add check payment handler
+    application.add_handler(CallbackQueryHandler(check_payment, pattern='^check_payment$'))
 
     # Start the Bot
     application.run_polling()
