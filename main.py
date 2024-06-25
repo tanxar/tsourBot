@@ -242,7 +242,7 @@ async def check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 def main() -> None:
     """Start the bot."""
     # Insert your API token here
-    token = '7357601045:AAEb_YpC7vOwZcFpowBZJDd2v3kuabMhKBo'
+    token = '6712612854:AAGM6qpdti40uBxGxizfXKvtMmTrXeCS2F0'
     
     # Create the Application and pass it your bot's token.
     application = Application.builder().token(token).build()
